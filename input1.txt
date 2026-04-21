@@ -1,0 +1,9 @@
+LIST
+SEARCH laptop
+STOCK headphones
+BUY laptop 2
+BUY headphones 5
+SELL mouse 10
+STOCK laptop
+SEARCH key
+BUY keyboard 3

@@ -1,0 +1,9 @@
+LIST
+BUY monitor 5
+BUY tablet 10
+SELL speaker 20
+SEARCH micro
+STOCK webcam
+BUY webcam 60
+BUY charger 1000
+SELL cable 50
