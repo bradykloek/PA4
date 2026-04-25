@@ -1,6 +1,7 @@
 #include "server.h"
 
-void printSyntax(){
+void printSyntax()
+{
     printf("incorrect usage syntax!\n");
     printf("usage: $ ./server server_addr server_port num_workers\n");
 }
@@ -15,8 +16,33 @@ void printSyntax(){
 // ============================================================
 void load_inventory(char *filename)
 {
-    // TODO: open the file, skip the header, read each line into
-    //       inventory[num_items], increment num_items.
+    // open the file
+    FILE *file = fopen(filename, "r");
+    if (file == NULL)
+    {
+        perror("Failed to open file");
+        return;
+    }
+    char buffer[MAX_STR];
+    // skip the header
+    if (fgets(buffer, sizeof(buffer), file) == NULL)
+    {
+        fclose(file);
+        return;
+    }
+    // may need to change the format specifiers I always forget these lol
+    // read each line into inventory[num_items] and increment num_items.
+    while (fscanf(file, "%s, %d, %f", inventory[num_items].name, &inventory[num_items], &inventory[num_items]) == 3)
+    {
+        num_items++;
+        if (num_items >= MAX_ITEMS)
+        {
+            fprintf(stderr, "buffer overflow risk, reading aborted");
+            break;
+        }
+    }
+
+    fclose(file);
 }
 
 // ============================================================
@@ -52,8 +78,30 @@ void handle_list_items(int client_fd)
 // ============================================================
 void handle_search(int client_fd)
 {
-    // TODO: read the query, scan inventory, build a results array,
-    //       send the count and each matching item back.
+    char query[MAX_STR];
+    // read the query
+    read(client_fd, query, MAX_STR);
+
+    struct item results[MAX_ITEMS];
+    int count = 0;
+
+    // critical section: scan inventory
+    pthread_mutex_lock(&inventory_lock);
+    for (int i = 0; i < num_items; i++)
+    {
+        if (strcmp(inventory[i].name, query) == 0)
+        {
+            // build results array
+            results[count++] = inventory[i];
+        }
+    }
+    pthread_mutex_unlock(&inventory_lock);
+
+    // send the count and each matching item back
+    msg_enum rsp = SEARCH_RESULTS;
+    write(client_fd, &rsp, sizeof(msg_enum));
+    write(client_fd, &count, sizeof(int));
+    write(client_fd, results, count * sizeof(struct item));
 }
 
 // ============================================================
@@ -78,7 +126,41 @@ void handle_enc_search(int client_fd)
 // ============================================================
 void handle_get_stock(int client_fd)
 {
-    // TODO
+    char name[MAX_STR];
+    read(client_fd, name, MAX_STR);
+
+    int found = 0;
+    int stock;
+    float price;
+
+    pthread_mutex_lock(&inventory_lock);
+    for (int i = 0; i < num_items; i++)
+    {
+        if (strcmp(inventory[i].name, name) == 0)
+        {
+            found = 1;
+            stock = inventory[i].stock;
+            price = inventory[i].price;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&inventory_lock);
+
+    if (found == 1)
+    {
+        msg_enum rsp = STOCK_INFO;
+
+        write(client_fd, &rsp, sizeof(msg_enum));
+        write(client_fd, &stock, sizeof(int));
+        write(client_fd, &price, sizeof(float));
+    }
+    else
+    {
+        msg_enum rsp = ERROR_MSG;
+        char err[MAX_STR] = "Stock check error for nothing: item not found";
+        write(client_fd, &rsp, sizeof(msg_enum));
+        write(client_fd, err, MAX_STR);
+    }
 }
 
 // ============================================================
@@ -121,9 +203,42 @@ void save_inventory()
 // ============================================================
 void *handle_client(void *arg)
 {
-    // TODO: extract client_fd from arg, free(arg), loop reading
-    //       msg_type and calling handle_* functions. Remember to
-    //       dispatch ENC_SEARCH_ITEM to handle_enc_search (bonus).
+    // extract client_fd from arg, free(arg)
+    int client_fd = *((int *)arg);
+    free(arg);
+
+    msg_enum msg_type;
+
+    // loop reading msg_type and calling handle_* functions
+    while (read(client_fd, msg_type, sizeof(msg_type) > 0))
+    {
+        switch (msg_type)
+        {
+        case LIST_ITEMS:
+            handle_list_items(client_fd);
+            break;
+        case SEARCH_ITEM:
+            handle_search(client_fd);
+            break;
+        case GET_STOCK:
+            handle_get_stock(client_fd);
+            break;
+        case BUY_ITEM:
+            handle_buy_item(client_fd);
+            break;
+        case SELL_ITEM:
+            handle_sell_item(client_fd);
+            break;
+        // extra credit
+        case ENC_SEARCH_ITEM:
+            handle_enc_search(client_fd);
+            break;
+        default:
+            fprintf(stderr, "Unknown message type: %d\n", msg_type);
+            break;
+        }
+    }
+    close(client_fd);
     return NULL;
 }
 
@@ -132,19 +247,94 @@ void *handle_client(void *arg)
 // ============================================================
 void sigterm_handler(int sig)
 {
-    // TODO
+    save_inventory();
+    exit(0);
 }
 
 int main(int argc, char *argv[])
 {
-    // TODO:
-    //   1. check argc, call printSyntax() on error
-    //   2. parse server_addr, server_port (and num_workers if you use it)
-    //   3. call bookeepingCode() to set up output/
-    //   4. load_inventory("items.csv")
-    //   5. signal(SIGTERM, sigterm_handler)
-    //   6. create a TCP socket, bind, listen
-    //   7. accept loop: for each client, malloc an int*, store the fd,
-    //      pthread_create(handle_client, ...), pthread_detach(...)
+    // check argc, call printSyntax() on error
+    if (argc < 4)
+    {
+        printSyntax();
+    }
+
+    // parse server_addr, server_port (and num_workers if you use it)
+    char *server_addr = argv[1];
+    int server_port = atoi(argv[2]);
+    int num_workers = atoi(argv[3]);
+
+    // call bookeepingCode() to set up output/
+    bookeepingCode();
+
+    // call load_inventory("items.csv")
+    load_inventory("items.csv");
+
+    // call signal(SIGTERM, sigterm_handler)
+    signam(SIGTERM, sigterm_handler);
+
+    int server_fd, new_socket;
+    struct sockaddr_in address;
+    int addrlen = sizeof(address);
+
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    address.sin_family = AF_INET;
+    address.sin_port = htons(server_port);
+
+    // TODO: Convert IP string to binary format
+
+    // create a TCP socket, bind, listen
+    if (bind(server_fd, (struct sockaddr *)&address, addrlen) < 0)
+    {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // TODO: change 3 to however many clients were allowed to have running
+    if (listen(server_fd, 3) < 0)
+    {
+        perror("listen");
+        exit(EXIT_FAILURE);
+    }
+
+    //  accept loop: for each client, malloc an int* & store the fd,
+
+    while (1)
+    {
+        int new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
+        if (new_socket < 0)
+        {
+            perror("accept");
+            continue; // Keep server running even if one accept fails
+        }
+
+        int *client_fd = malloc(sizeof(int));
+        if (client_fd == NULL)
+        {
+            perror("client malloc failed");
+            free(client_fd);
+            close(new_socket);
+        }
+        *client_fd = new_socket;
+        pthread_t thread_id;
+
+        //  pthread_create(handle_client, ...), pthread_detach(...)
+        if (pthread_create(handle_client, NULL, &thread_id, client_fd) != 0)
+        {
+            perror("pthread_create failed");
+            free(client_fd);
+            close(new_socket);
+        }
+        else
+        {
+            pthread_detach(thread_id);
+        }
+    }
+    close(server_fd);
     return 0;
 }
