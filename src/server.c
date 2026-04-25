@@ -32,7 +32,7 @@ void load_inventory(char *filename)
     }
     // may need to change the format specifiers I always forget these lol
     // read each line into inventory[num_items] and increment num_items.
-    while (fscanf(file, "%s, %d, %f", inventory[num_items].name, &inventory[num_items], &inventory[num_items]) == 3)
+    while (fscanf(file, "%s, %d, %.2f", inventory[num_items].name, &inventory[num_items], &inventory[num_items]) == 3)
     {
         num_items++;
         if (num_items >= MAX_ITEMS)
@@ -82,7 +82,7 @@ void handle_search(int client_fd)
     // read the query
     read(client_fd, query, MAX_STR);
 
-    struct item results[MAX_ITEMS];
+    struct item results[MAX_RESULTS];
     int count = 0;
 
     // critical section: scan inventory
@@ -113,9 +113,33 @@ void handle_search(int client_fd)
 // ============================================================
 void handle_enc_search(int client_fd)
 {
-    // TODO (bonus): read char query[MAX_STR]; decrypt_str(query);
-    //               then run the same search loop as handle_search,
-    //               and write SEARCH_RESULTS + count + items back.
+    char query[MAX_STR];
+    // read the query
+    read(client_fd, query, MAX_STR);
+
+    // call decrypt
+    decrypt_str(query);
+
+    struct item results[MAX_RESULTS];
+    int count = 0;
+
+    // critical section: scan inventory
+    pthread_mutex_lock(&inventory_lock);
+    for (int i = 0; i < num_items; i++)
+    {
+        if (strcmp(inventory[i].name, query) == 0)
+        {
+            // build results array
+            results[count++] = inventory[i];
+        }
+    }
+    pthread_mutex_unlock(&inventory_lock);
+
+    // send the count and each matching item back
+    msg_enum rsp = SEARCH_RESULTS;
+    write(client_fd, &rsp, sizeof(msg_enum));
+    write(client_fd, &count, sizeof(int));
+    write(client_fd, results, count * sizeof(struct item));
 }
 
 // ============================================================
@@ -172,7 +196,56 @@ void handle_get_stock(int client_fd)
 // ============================================================
 void handle_buy_item(int client_fd)
 {
-    // TODO
+    char name[MAX_STR];
+    int amount;
+
+    read(client_fd, name, MAX_STR);
+    read(client_fd, amount, sizeof(int));
+
+    float stock;
+    int idx = -1;
+
+    pthread_mutex_lock(&inventory_lock);
+    for (int i = 0; i < num_items; i++)
+    {
+        if (strcmp(inventory[i].name, name) == 0)
+        {
+            stock = inventory[i].stock;
+            idx = i;
+            break;
+        }
+    }
+    if (idx != -1 && stock >= amount)
+    {
+        inventory[idx].stock -= amount;
+        int new_stock = inventory[idx].stock;
+        float total_cost = inventory[idx].price * amount;
+        pthread_mutex_unlock(&inventory_lock);
+
+        msg_enum rsp = BUY_OK;
+        write(client_fd, &rsp, sizeof(msg_enum));
+        write(client_fd, &new_stock, sizeof(int));
+        write(client_fd, &total_cost, sizeof(float));
+    }
+    else
+    {
+        pthread_mutex_unlock(&inventory_lock);
+
+        msg_enum rsp = ERROR_MSG;
+        char err[MAX_STR];
+        if (idx == -1)
+        {
+            // stock not found
+            *err = "Stock check error for nothing: item not found";
+        }
+        else
+        {
+            // insufficient funds
+            *err = "Buy error for monitor: not enough stock";
+        }
+        write(client_fd, &rsp, sizeof(msg_enum));
+        write(client_fd, err, MAX_STR);
+    }
 }
 
 // ============================================================
@@ -183,7 +256,44 @@ void handle_buy_item(int client_fd)
 // ============================================================
 void handle_sell_item(int client_fd)
 {
-    // TODO
+    char name[MAX_STR];
+    int amount;
+
+    read(client_fd, name, MAX_STR);
+    read(client_fd, amount, sizeof(int));
+
+    float stock;
+    int idx = -1;
+
+    pthread_mutex_lock(&inventory_lock);
+    for (int i = 0; i < num_items; i++)
+    {
+        if (strcmp(inventory[i].name, name) == 0)
+        {
+            stock = inventory[i].stock;
+            idx = i;
+            break;
+        }
+    }
+    if (idx != -1)
+    {
+        inventory[idx].stock += amount;
+        int new_stock = inventory[idx].stock;
+        pthread_mutex_unlock(&inventory_lock);
+
+        msg_enum rsp = SELL_OK;
+        write(client_fd, &rsp, sizeof(msg_enum));
+        write(client_fd, &new_stock, sizeof(int));
+    }
+    else
+    {
+        pthread_mutex_unlock(&inventory_lock);
+
+        msg_enum rsp = ERROR_MSG;
+        char err[MAX_STR] = "Stock check error for nothing: item not found";
+        write(client_fd, &rsp, sizeof(msg_enum));
+        write(client_fd, err, MAX_STR);
+    }
 }
 
 // ============================================================
@@ -192,7 +302,27 @@ void handle_sell_item(int client_fd)
 // ============================================================
 void save_inventory()
 {
-    // TODO
+    FILE *file = fopen("output/inventory.csv", "w");
+    if (file == NULL)
+    {
+        fprintf(stderr, "failed to create output file\n");
+        return;
+    }
+
+    // write header
+    fprintf(file, "name,stock,price\n");
+
+    pthread_mutex_lock(&inventory_lock);
+    for (int i = 0; i < num_items; i++)
+    {
+        fprintf(file, "%s,%d,%.2f\n",
+                inventory[i].name,
+                inventory[i].stock,
+                inventory[i].price);
+    }
+    pthread_mutex_unlock(&inventory_lock);
+
+    fclose(file);
 }
 
 // ============================================================
@@ -303,14 +433,13 @@ int main(int argc, char *argv[])
     }
 
     //  accept loop: for each client, malloc an int* & store the fd,
-
     while (1)
     {
         int new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
         if (new_socket < 0)
         {
             perror("accept");
-            continue; // Keep server running even if one accept fails
+            continue; // server keeps running even if one fails
         }
 
         int *client_fd = malloc(sizeof(int));
@@ -335,6 +464,7 @@ int main(int argc, char *argv[])
             pthread_detach(thread_id);
         }
     }
+
     close(server_fd);
     return 0;
 }
