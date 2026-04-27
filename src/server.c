@@ -416,7 +416,13 @@ int main(int argc, char *argv[])
     address.sin_family = AF_INET;
     address.sin_port = htons(server_port);
 
-    // TODO: Convert IP string to binary format
+    // Convert IP string to binary format
+    address.sin_addr.s_addr = inet_addr(server_addr);
+
+    if (address.sin_addr.s_addr == INADDR_NONE)
+    {
+        fprintf(stderr, "Invalid IP address\n");
+    }
 
     // create a TCP socket, bind, listen
     if (bind(server_fd, (struct sockaddr *)&address, addrlen) < 0)
