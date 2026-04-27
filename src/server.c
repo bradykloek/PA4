@@ -340,7 +340,7 @@ void *handle_client(void *arg)
     msg_enum msg_type;
 
     // loop reading msg_type and calling handle_* functions
-    while (read(client_fd, msg_type, sizeof(msg_type) > 0))
+    while (read(client_fd, &msg_type, sizeof(msg_type) > 0))
     {
         switch (msg_type)
         {

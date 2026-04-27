@@ -33,12 +33,31 @@ void bookeepingCode()
 // Used to lightly obfuscate the query sent by ENC_SEARCH_ITEM.
 // Shifts letters only; non-letters are passthrough.
 // Wraps at the end of the alphabet: 'y'->'a', 'z'->'b', 'Y'->'A', 'Z'->'B'.
+
 void encrypt_str(char *s)
 {
-    //TODO
+    int i = 0;
+    while (s[i] != '\0'){
+        if ('a' <= s[i] && s[i] <= 'z') {
+            s[i] = (s[i] - 'a' + 2) % 26 + 'a';
+        }
+        else if ('A' <= s[i] && s[i] <= 'Z') {
+            s[i] = (s[i] - 'A' + 2) % 26 + 'A';
+        }
+    }
+    //DONE
 }
 
 void decrypt_str(char *s)
 {
-    //TODO
+    int i = 0;
+    while (s[i] != '\0'){
+        if ('a' <= s[i] && s[i] <= 'z') {
+            s[i] = (s[i] - 'a' - 2) % 26 + 'a';
+        }
+        else if ('A' <= s[i] && s[i] <= 'Z') {
+            s[i] = (s[i] - 'A' - 2) % 26 + 'A';
+        }
+    }
+    //DONE
 }
